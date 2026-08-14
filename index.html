@@ -2634,7 +2634,57 @@ const SKINS = [
   {name:'Shadow Black',  c1:'#aaaaaa', c2:'#111111', price:1750},
   {name:'Rainbow Neon',  c1:'#ff0055', c2:'#330000', price:2000, rainbow:true},
   {name:'Emerald Spirit',c1:'#00ff88', c2:'#003322', price:2500},
+  {name:'Royal Serpent', c1:'#ffd700', c2:'#5a1a1a', price:0, sprite:'royal'},
 ];
+
+/* =========================================================
+   ROYAL SERPENT — SPRITE ASSETS (head/body/tail PNG skin)
+   Loaded once; drawing code below falls back to the normal
+   procedural skin rendering automatically until images are
+   ready, so nothing else in the game is affected.
+========================================================= */
+const royalSerpentSprites = {
+  head: new Image(),
+  body: new Image(),
+  tail: new Image(),
+};
+royalSerpentSprites.head.src = 'royal-head.png';
+royalSerpentSprites.body.src = 'royal-body.png';
+royalSerpentSprites.tail.src = 'royal-tail.png';
+
+function royalSpritesReady(){
+  const s=royalSerpentSprites;
+  return s.head.complete && s.head.naturalWidth>0 &&
+         s.body.complete && s.body.naturalWidth>0 &&
+         s.tail.complete && s.tail.naturalWidth>0;
+}
+
+// Draws an image centered at (x,y), rotated to `angle`, scaled so its
+// largest dimension equals targetSize (aspect ratio preserved, so the
+// PNG's own transparent background is respected — no stretching/crop).
+function drawRotatedSprite(ctxRef, img, x, y, angle, targetSize){
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  if(!iw||!ih) return;
+  const scale=targetSize/Math.max(iw,ih);
+  const dw=iw*scale, dh=ih*scale;
+  ctxRef.save();
+  ctxRef.translate(x,y);
+  ctxRef.rotate(angle);
+  ctxRef.drawImage(img,-dw/2,-dh/2,dw,dh);
+  ctxRef.restore();
+}
+
+// If the shop or skins screen is already open when the sprites finish
+// loading, refresh their previews so Royal Serpent shows the real art
+// instead of the color-based fallback preview.
+['head','body','tail'].forEach(part=>{
+  royalSerpentSprites[part].addEventListener('load', ()=>{
+    const shopEl=document.getElementById('shopScreen');
+    const skinsEl=document.getElementById('skinsScreen');
+    if(shopEl && !shopEl.classList.contains('hidden') && typeof buildShopGrid==='function') buildShopGrid();
+    if(skinsEl && !skinsEl.classList.contains('hidden') && typeof buildSkinRow==='function') buildSkinRow();
+  });
+});
 
 /* =========================================================
    MAP SPECIAL FX STATE
@@ -3008,10 +3058,51 @@ function hideMenu(){ mainMenu.classList.add('hidden'); }
 /* =========================================================
    SHOP SYSTEM
 ========================================================= */
+function drawWormPreviewRoyalSprite(cx, W, H){
+  const nSegs=18;
+  const headR=Math.min(H*0.38, 13);
+  const segs=[];
+  for(let i=0;i<nSegs;i++){
+    const t=i/(nSegs-1);
+    const x=W*0.12 + t*W*0.76;
+    const y=H*0.5 + Math.sin(t*Math.PI*1.6 - 0.4)*H*0.3;
+    segs.push({x,y});
+  }
+  const sprites=royalSerpentSprites;
+
+  // BODY
+  for(let i=nSegs-1;i>=1;i--){
+    const s=segs[i];
+    const t=i/nSegs;
+    const r=Math.max(headR*(0.32+t*0.68), 1.8);
+    const prev=segs[Math.max(i-1,0)];
+    const next=segs[Math.min(i+1,nSegs-1)];
+    const ang=Math.atan2(prev.y-next.y, prev.x-next.x);
+    drawRotatedSprite(cx, sprites.body, s.x, s.y, ang, r*2.3);
+  }
+
+  // TAIL
+  const tail=segs[nSegs-1];
+  const preTail=segs[nSegs-2]||segs[nSegs-1];
+  const tailAng=Math.atan2(tail.y-preTail.y, tail.x-preTail.x);
+  drawRotatedSprite(cx, sprites.tail, tail.x, tail.y, tailAng, headR*1.5);
+
+  // HEAD
+  const head=segs[0];
+  const neck=segs[1]||segs[0];
+  const ang=Math.atan2(head.y-neck.y, head.x-neck.x);
+  drawRotatedSprite(cx, sprites.head, head.x, head.y, ang, headR*2.6);
+}
+
 function drawWormPreview(cvs, skin, hueOffset){
   const W=cvs.width, H=cvs.height;
   const cx=cvs.getContext('2d');
   cx.clearRect(0,0,W,H);
+
+  if(skin.sprite==='royal' && royalSpritesReady()){
+    drawWormPreviewRoyalSprite(cx, W, H);
+    return;
+  }
   const nSegs=18;
   const headR=Math.min(H*0.38, 13);
   const segs=[];
@@ -3803,6 +3894,54 @@ function drawOrbs(){
   ctx2d.restore();
 }
 
+function drawWormRoyalSprite(w, segs, n, hr0, segStep, zoomed, cw, ch){
+  const sprites=royalSerpentSprites;
+  const head0=segs[0];
+  const hp=worldToScreen(head0.x,head0.y);
+  const ang=w.angle;
+
+  // --- BODY: sprite per sampled segment, oriented to local body direction ---
+  for(let i=n-1;i>=1;i-=segStep){
+    const s=segs[i];
+    const p=worldToScreen(s.x,s.y);
+    if(p.x<-80||p.x>cw+80||p.y<-80||p.y>ch+80) continue;
+    const t=i/n;
+    const rr=clamp(hr0*(1-t*0.52),2,hr0)*zoomed;
+    const prevIdx=Math.max(i-1,0);
+    const nextIdx=Math.min(i+1,n-1);
+    const dirAngle=Math.atan2(segs[prevIdx].y-segs[nextIdx].y, segs[prevIdx].x-segs[nextIdx].x);
+    // slight overscale so consecutive segments overlap with no gaps
+    drawRotatedSprite(ctx2d, sprites.body, p.x, p.y, dirAngle, rr*2.3);
+  }
+
+  // --- TAIL: drawn at the very last segment, oriented to the last segment's direction ---
+  const tailIdx=n-1;
+  const tailSeg=segs[tailIdx];
+  const tp=worldToScreen(tailSeg.x,tailSeg.y);
+  if(!(tp.x<-80||tp.x>cw+80||tp.y<-80||tp.y>ch+80)){
+    const preTail=segs[Math.max(tailIdx-1,0)];
+    const tailAngle=Math.atan2(tailSeg.y-preTail.y, tailSeg.x-preTail.x);
+    const tTail=tailIdx/n;
+    const tailR=clamp(hr0*(1-tTail*0.52),2,hr0)*zoomed;
+    drawRotatedSprite(ctx2d, sprites.tail, tp.x, tp.y, tailAngle, tailR*2.6);
+  }
+
+  // --- HEAD: always drawn last (on top), rotated to the worm's movement angle ---
+  const hr=hr0*zoomed;
+  const glow=quality!=='low';
+  if(glow){ ctx2d.save(); ctx2d.shadowColor=w.skin.c1; ctx2d.shadowBlur=hr*1.2; }
+  drawRotatedSprite(ctx2d, sprites.head, hp.x, hp.y, ang, hr*2.6);
+  if(glow){ ctx2d.restore(); }
+
+  // --- NAME (unchanged behavior, same as procedural skins) ---
+  if(!w.isPlayer){
+    ctx2d.fillStyle='rgba(255,255,255,0.65)';
+    ctx2d.font=`${11*DPR}px 'Work Sans',Arial`;
+    ctx2d.textAlign='center';
+    ctx2d.fillText(w.name, hp.x, hp.y-hr-8*DPR);
+  }
+}
+
 function drawWorm(w){
   if(!w.alive) return;
   const segs=w.segments;
@@ -3812,6 +3951,12 @@ function drawWorm(w){
   const n=segs.length;
   if(n<2) return;
   const segStep=n>700?6:n>450?5:n>250?4:n>150?3:n>80?2:1;
+
+  if(w.skin.sprite==='royal' && royalSpritesReady()){
+    drawWormRoyalSprite(w, segs, n, hr0, segStep, zoomed, cw, ch);
+    return;
+  }
+
   const isRainbow=w.skin.rainbow;
   const now=Date.now();
 
